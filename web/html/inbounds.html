@@ -910,6 +910,8 @@
       showAlert: false,
       ipLimitEnable: false,
       pageSize: 0,
+      protocolOptions: Object.values(Protocols),
+      pluginInboundProtocols: [],
     },
     methods: {
       loading(spinning = true) {
@@ -965,6 +967,24 @@
           this.remarkModel = remarkModel;
           this.datepicker = datepicker;
           this.ipLimitEnable = ipLimitEnable;
+        }
+      },
+      async loadPluginInboundProtocols() {
+        const msg = await HttpUtil.get('/panel/api/plugins/inbound-protocols');
+        if (!msg.success || !Array.isArray(msg.obj)) {
+          this.pluginInboundProtocols = [];
+          this.protocolOptions = Object.values(Protocols);
+          if (typeof window.setPluginProtocolSchemas === 'function') {
+            window.setPluginProtocolSchemas([]);
+          }
+          return;
+        }
+        this.pluginInboundProtocols = msg.obj.filter((p) => p && p.id);
+        const builtin = Object.values(Protocols);
+        const pluginIDs = this.pluginInboundProtocols.map((p) => p.id).filter((id) => !builtin.includes(id));
+        this.protocolOptions = [...builtin, ...pluginIDs];
+        if (typeof window.setPluginProtocolSchemas === 'function') {
+          window.setPluginProtocolSchemas(this.pluginInboundProtocols);
         }
       },
       setInbounds(dbInbounds) {
@@ -1811,6 +1831,7 @@
       }
       this.loading();
       this.getDefaultSettings();
+      this.loadPluginInboundProtocols();
       
       // Initial data fetch
       this.getDBInbounds().then(() => {

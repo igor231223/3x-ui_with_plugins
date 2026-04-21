@@ -11,6 +11,25 @@ const Protocols = {
     HYSTERIA: 'hysteria',
 };
 
+const PluginProtocolSchemas = {};
+
+function getPluginProtocolSchema(protocol) {
+    if (!protocol) return null;
+    return PluginProtocolSchemas[protocol] || null;
+}
+
+function setPluginProtocolSchemas(protocols = []) {
+    Object.keys(PluginProtocolSchemas).forEach((key) => {
+        delete PluginProtocolSchemas[key];
+    });
+    (protocols || []).forEach((item) => {
+        if (!item || !item.id) return;
+        PluginProtocolSchemas[item.id] = item;
+    });
+}
+
+window.setPluginProtocolSchemas = setPluginProtocolSchemas;
+
 const SSMethods = {
     AES_256_GCM: 'aes-256-gcm',
     CHACHA20_POLY1305: 'chacha20-poly1305',
@@ -1471,7 +1490,11 @@ class Inbound extends XrayCommonClass {
     }
 
     canEnableStream() {
-        return [Protocols.VMESS, Protocols.VLESS, Protocols.TROJAN, Protocols.SHADOWSOCKS, Protocols.HYSTERIA].includes(this.protocol);
+        if ([Protocols.VMESS, Protocols.VLESS, Protocols.TROJAN, Protocols.SHADOWSOCKS, Protocols.HYSTERIA].includes(this.protocol)) {
+            return true;
+        }
+        const pluginSchema = getPluginProtocolSchema(this.protocol);
+        return !!(pluginSchema && pluginSchema.supportsStream);
     }
 
     reset() {
@@ -1979,7 +2002,7 @@ Inbound.Settings = class extends XrayCommonClass {
             case Protocols.WIREGUARD: return new Inbound.WireguardSettings(protocol);
             case Protocols.TUN: return new Inbound.TunSettings(protocol);
             case Protocols.HYSTERIA: return new Inbound.HysteriaSettings(protocol);
-            default: return null;
+            default: return new Inbound.GenericSettings(protocol);
         }
     }
 
@@ -1995,12 +2018,36 @@ Inbound.Settings = class extends XrayCommonClass {
             case Protocols.WIREGUARD: return Inbound.WireguardSettings.fromJson(json);
             case Protocols.TUN: return Inbound.TunSettings.fromJson(json);
             case Protocols.HYSTERIA: return Inbound.HysteriaSettings.fromJson(json);
-            default: return null;
+            default: return Inbound.GenericSettings.fromJson(protocol, json);
         }
     }
 
     toJson() {
         return {};
+    }
+};
+
+Inbound.GenericSettings = class extends Inbound.Settings {
+    constructor(protocol, values = {}) {
+        super(protocol);
+        this.values = values || {};
+    }
+
+    static fromJson(protocol, json = {}) {
+        const schema = getPluginProtocolSchema(protocol);
+        if (!schema || !Array.isArray(schema.fields)) {
+            return new Inbound.GenericSettings(protocol, json || {});
+        }
+        const values = {};
+        schema.fields.forEach((field) => {
+            const hasIncoming = Object.prototype.hasOwnProperty.call(json || {}, field.key);
+            values[field.key] = hasIncoming ? json[field.key] : field.default;
+        });
+        return new Inbound.GenericSettings(protocol, values);
+    }
+
+    toJson() {
+        return this.values || {};
     }
 };
 

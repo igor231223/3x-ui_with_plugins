@@ -10,7 +10,7 @@
 
     <a-form-item label='{{ i18n "protocol" }}'>
         <a-select v-model="inbound.protocol" :disabled="isEdit" :dropdown-class-name="themeSwitcher.currentTheme">
-            <a-select-option v-for="p in Protocols" :key="p" :value="p">[[ p
+            <a-select-option v-for="p in protocolOptions" :key="p" :value="p">[[ p
                 ]]</a-select-option>
         </a-select>
     </a-form-item>
@@ -148,6 +148,38 @@
 <!-- hysteria -->
 <template v-if="inbound.protocol === Protocols.HYSTERIA">
     {{template "form/hysteria"}}
+</template>
+
+<!-- dynamic plugin protocol settings -->
+<template v-if="isPluginProtocol(inbound.protocol)">
+    <a-form :colon="false" :label-col="{ md: {span:8} }" :wrapper-col="{ md: {span:14} }">
+        <a-form-item v-for="field in pluginProtocolFields(inbound.protocol)" :key="field.key" :label="field.label">
+            <a-input
+                v-if="field.type === 'text'"
+                v-model.trim="inbound.settings.values[field.key]"
+                :placeholder="field.placeholder || ''"
+            ></a-input>
+            <a-input-password
+                v-else-if="field.type === 'password'"
+                v-model.trim="inbound.settings.values[field.key]"
+                :placeholder="field.placeholder || ''"
+            ></a-input-password>
+            <a-input-number
+                v-else-if="field.type === 'number'"
+                v-model.number="inbound.settings.values[field.key]"
+                :style="{ width: '100%' }"
+            ></a-input-number>
+            <a-switch
+                v-else-if="field.type === 'bool'"
+                v-model="inbound.settings.values[field.key]"
+            ></a-switch>
+            <a-input
+                v-else
+                v-model.trim="inbound.settings.values[field.key]"
+                :placeholder="field.placeholder || ''"
+            ></a-input>
+        </a-form-item>
+    </a-form>
 </template>
 
 <!-- stream settings -->

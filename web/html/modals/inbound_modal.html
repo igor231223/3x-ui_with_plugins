@@ -124,6 +124,12 @@
             get isEdit() {
                 return inModal.isEdit;
             },
+            get protocolOptions() {
+                if (window.app && Array.isArray(window.app.protocolOptions) && window.app.protocolOptions.length > 0) {
+                    return window.app.protocolOptions;
+                }
+                return Object.values(Protocols);
+            },
             get client() {
                 return inModal.inbound &&
                     inModal.inbound.clients &&
@@ -199,6 +205,19 @@
             },
         },
         methods: {
+            isPluginProtocol(protocol) {
+                if (!window.app || !Array.isArray(window.app.pluginInboundProtocols)) {
+                    return false;
+                }
+                return window.app.pluginInboundProtocols.some((p) => p && p.id === protocol);
+            },
+            pluginProtocolFields(protocol) {
+                if (!window.app || !Array.isArray(window.app.pluginInboundProtocols)) {
+                    return [];
+                }
+                const match = window.app.pluginInboundProtocols.find((p) => p && p.id === protocol);
+                return match && Array.isArray(match.fields) ? match.fields : [];
+            },
             streamNetworkChange() {
                 if (!inModal.inbound.canEnableTls()) {
                     this.inModal.inbound.stream.security = "none";

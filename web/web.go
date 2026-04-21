@@ -19,6 +19,7 @@ import (
 
 	"github.com/mhsanaei/3x-ui/v2/config"
 	"github.com/mhsanaei/3x-ui/v2/logger"
+	"github.com/mhsanaei/3x-ui/v2/plugins"
 	"github.com/mhsanaei/3x-ui/v2/util/common"
 	"github.com/mhsanaei/3x-ui/v2/web/controller"
 	"github.com/mhsanaei/3x-ui/v2/web/job"
@@ -109,6 +110,8 @@ type Server struct {
 
 	wsHub *websocket.Hub
 
+	pluginManager *plugins.Manager
+
 	cron *cron.Cron
 
 	ctx    context.Context
@@ -118,9 +121,13 @@ type Server struct {
 // NewServer creates a new web server instance with a cancellable context.
 func NewServer() *Server {
 	ctx, cancel := context.WithCancel(context.Background())
+	pluginManager := plugins.NewManager()
+	_ = pluginManager.LoadExternalPlugins(filepath.Join(config.GetDBFolderPath(), "plugins", "manifest.json"))
+	service.SetPluginManager(pluginManager)
 	return &Server{
-		ctx:    ctx,
-		cancel: cancel,
+		ctx:           ctx,
+		cancel:        cancel,
+		pluginManager: pluginManager,
 	}
 }
 
@@ -271,7 +278,7 @@ func (s *Server) initRouter() (*gin.Engine, error) {
 
 	s.index = controller.NewIndexController(g)
 	s.panel = controller.NewXUIController(g)
-	s.api = controller.NewAPIController(g, s.customGeoService)
+	s.api = controller.NewAPIController(g, s.customGeoService, s.pluginManager)
 
 	// Initialize WebSocket hub
 	s.wsHub = websocket.NewHub()
@@ -417,6 +424,11 @@ func (s *Server) Start() (err error) {
 	if err != nil {
 		return err
 	}
+	if s.pluginManager != nil {
+		if err := s.pluginManager.Start(s.ctx); err != nil {
+			return err
+		}
+	}
 
 	certFile, err := s.settingService.GetCertFile()
 	if err != nil {
@@ -489,6 +501,11 @@ func (s *Server) Stop() error {
 	// Gracefully stop WebSocket hub
 	if s.wsHub != nil {
 		s.wsHub.Stop()
+	}
+	if s.pluginManager != nil {
+		if err := s.pluginManager.Stop(s.ctx); err != nil {
+			logger.Warning("plugin manager stop failed:", err)
+		}
 	}
 	var err1 error
 	var err2 error

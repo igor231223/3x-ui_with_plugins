@@ -1,0 +1,13 @@
+[
+  {
+    "id": "naive",
+    "baseUrl": "http://127.0.0.1:17231",
+    "command": "/usr/local/bin/naive-plugind",
+    "args": [],
+    "workingDir": ".",
+    "env": {
+      "NAIVE_PLUGIN_PORT": "17231"
+    },
+    "autostart": false
+  }
+]

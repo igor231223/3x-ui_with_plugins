@@ -201,7 +201,7 @@
 "installBlockedTitle" = "Установка заблокирована политикой"
 "installBlockedDesc" = "Удаленные плагины без authToken заблокированы текущей политикой."
 "catalogTitle" = "Доступные плагины"
-"catalogSourcePlaceholder" = "https://github.com/igor231223/3x-ui_plugins.git"
+"catalogSourcePlaceholder" = "Вставьте URL репозитория плагинов (или путь)"
 "catalogLoad" = "Загрузить каталог"
 "catalogLoadFailed" = "Не удалось загрузить каталог плагинов"
 "catalogSourceRequired" = "Укажите источник каталога"

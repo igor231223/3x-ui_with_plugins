@@ -56,7 +56,11 @@ func NewAPIController(g *gin.RouterGroup, customGeo *service.CustomGeoService, p
 // to hide the existence of API endpoints from unauthorized users
 func (a *APIController) checkAPIAuth(c *gin.Context) {
 	if !session.IsLogin(c) {
-		c.AbortWithStatus(http.StatusNotFound)
+		if isAjax(c) {
+			pureJsonMsg(c, http.StatusUnauthorized, false, "unauthorized")
+		} else {
+			c.AbortWithStatus(http.StatusNotFound)
+		}
 		return
 	}
 	c.Next()

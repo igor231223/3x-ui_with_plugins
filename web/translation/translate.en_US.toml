@@ -201,7 +201,7 @@
 "installBlockedTitle" = "Install blocked by policy"
 "installBlockedDesc" = "Remote plugins without authToken are blocked by current policy."
 "catalogTitle" = "Available plugins"
-"catalogSourcePlaceholder" = "https://github.com/igor231223/3x-ui_plugins.git"
+"catalogSourcePlaceholder" = "Paste plugin repository URL (or local path)"
 "catalogLoad" = "Load catalog"
 "catalogLoadFailed" = "Failed to load plugin catalog"
 "catalogSourceRequired" = "Catalog source is required"

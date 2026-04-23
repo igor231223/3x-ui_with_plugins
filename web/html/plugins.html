@@ -10,13 +10,15 @@
         <a-col>
           <a-card :title="'{{ i18n "pages.plugins.catalogTitle" }}'" hoverable>
             <a-space direction="vertical" style="width: 100%">
-              <div class="d-flex justify-between align-center">
+              <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center; width: 100%;">
                 <a-input
                   v-model.trim="catalog.source"
                   :placeholder="'{{ i18n "pages.plugins.catalogSourcePlaceholder" }}'"
-                  style="width: 560px; max-width: 100%"
+                  style="flex: 1 1 420px; min-width: 260px;"
+                  autocomplete="off"
+                  name="plugin-catalog-source"
                 />
-                <a-button type="primary" icon="search" :loading="catalog.loading" @click="loadCatalog">
+                <a-button type="primary" icon="search" :loading="catalog.loading" @click="loadCatalog" style="flex: 0 0 auto;">
                   {{ i18n "pages.plugins.catalogLoad" }}
                 </a-button>
               </div>
@@ -44,8 +46,8 @@
         <a-col>
           <a-card :title="'{{ i18n "pages.plugins.title" }}'" hoverable>
             <a-space direction="vertical" style="width: 100%">
-              <div class="d-flex justify-between align-center">
-                <a-space>
+              <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; flex-wrap: wrap; width: 100%;">
+                <a-space style="display: flex; flex-wrap: wrap; row-gap: 6px;">
                   <a-tooltip :overlay-class-name="themeSwitcher.currentTheme">
                     <template slot="title">{{ i18n "pages.plugins.strictAuthHint" }}</template>
                     <a-switch
@@ -62,14 +64,14 @@
                   <a-input
                     v-model.trim="pluginRegistryFilter"
                     :placeholder="'{{ i18n "pages.index.pluginRegistrySearchPlaceholder" }}'"
-                    style="width: 260px"
+                    style="width: 260px; min-width: 200px;"
                     allow-clear
                   />
+                </a-space>
+                <a-space>
                   <a-button size="small" icon="plus" type="primary" @click="pluginInstallModal.visible = true" :disabled="pluginRegistryActionLoading">
                     {{ i18n "pages.plugins.addPlugin" }}
                   </a-button>
-                </a-space>
-                <a-space>
                   <a-button size="small" icon="branches" @click="syncPluginRouting" :loading="pluginRoutingSyncLoading">
                     {{ i18n "pages.plugins.syncRouting" }}
                   </a-button>
@@ -482,6 +484,7 @@
       },
     },
     async mounted() {
+      this.catalog.source = '';
       await this.loadPluginInstallPolicy();
       await this.loadPluginRegistry();
     },

@@ -15,7 +15,6 @@ import (
 	"github.com/mhsanaei/3x-ui/v2/database"
 	"github.com/mhsanaei/3x-ui/v2/database/model"
 	"github.com/mhsanaei/3x-ui/v2/logger"
-	naiveplugin "github.com/mhsanaei/3x-ui/v2/plugins/naive"
 	"github.com/mhsanaei/3x-ui/v2/util/common"
 	"github.com/mhsanaei/3x-ui/v2/util/random"
 	"github.com/mhsanaei/3x-ui/v2/web/service"
@@ -30,7 +29,6 @@ type SubService struct {
 	datepicker     string
 	inboundService service.InboundService
 	settingService service.SettingService
-	naiveService   naiveplugin.NaivePluginService
 }
 
 // NewSubService creates a new subscription service with the given configuration.
@@ -48,9 +46,6 @@ func (s *SubService) GetSubs(subId string, host string) ([]string, int64, xray.C
 	var traffic xray.ClientTraffic
 	var lastOnline int64
 	var clientTraffics []xray.ClientTraffic
-	naiveState, _ := s.naiveService.GetState()
-	naiveConfig, _ := s.naiveService.GetRuntimeConfig()
-	naiveAddedForEmail := map[string]bool{}
 	inbounds, err := s.getInboundsBySubId(subId)
 	if err != nil {
 		return nil, 0, traffic, err
@@ -84,10 +79,6 @@ func (s *SubService) GetSubs(subId string, host string) ([]string, int64, xray.C
 			if client.Enable && client.SubID == subId {
 				link := s.getLink(inbound, client.Email)
 				result = append(result, link)
-				if naiveLink := s.genNaiveLink(inbound, client.Email, naiveState, naiveConfig); naiveLink != "" && !naiveAddedForEmail[client.Email] {
-					result = append(result, naiveLink)
-					naiveAddedForEmail[client.Email] = true
-				}
 				ct := s.getClientTraffics(inbound.ClientStats, client.Email)
 				clientTraffics = append(clientTraffics, ct)
 				if ct.LastOnline > lastOnline {
@@ -123,29 +114,6 @@ func (s *SubService) GetSubs(subId string, host string) ([]string, int64, xray.C
 		}
 	}
 	return result, lastOnline, traffic, nil
-}
-
-func (s *SubService) genNaiveLink(inbound *model.Inbound, email string, state *naiveplugin.NaivePluginState, cfg *naiveplugin.NaiveRuntimeConfig) string {
-	if state == nil || cfg == nil {
-		return ""
-	}
-	if !state.Enabled || state.State != naiveplugin.NaivePluginStateHealthy {
-		return ""
-	}
-	domain := strings.TrimSpace(cfg.Domain)
-	username := strings.TrimSpace(cfg.Username)
-	password := strings.TrimSpace(cfg.Password)
-	if domain == "" || username == "" || password == "" || cfg.Port <= 0 {
-		return ""
-	}
-
-	u := &url.URL{
-		Scheme: "naive+https",
-		User:   url.UserPassword(username, password),
-		Host:   fmt.Sprintf("%s:%d", domain, cfg.Port),
-	}
-	u.Fragment = s.genRemark(inbound, email, "naive")
-	return u.String()
 }
 
 func (s *SubService) getInboundsBySubId(subId string) ([]*model.Inbound, error) {

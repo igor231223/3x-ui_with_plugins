@@ -1,0 +1,490 @@
+{{ template "page/head_start" .}}
+{{ template "page/head_end" .}}
+
+{{ template "page/body_start" .}}
+<a-layout id="app" v-cloak :class="themeSwitcher.currentTheme + ' plugins-page'">
+  <a-sidebar></a-sidebar>
+  <a-layout id="content-layout">
+    <a-layout-content>
+      <a-row :gutter="[16, 12]">
+        <a-col>
+          <a-card :title="'{{ i18n "pages.plugins.catalogTitle" }}'" hoverable>
+            <a-space direction="vertical" style="width: 100%">
+              <div class="d-flex justify-between align-center">
+                <a-input
+                  v-model.trim="catalog.source"
+                  :placeholder="'{{ i18n "pages.plugins.catalogSourcePlaceholder" }}'"
+                  style="width: 560px; max-width: 100%"
+                />
+                <a-button type="primary" icon="search" :loading="catalog.loading" @click="loadCatalog">
+                  {{ i18n "pages.plugins.catalogLoad" }}
+                </a-button>
+              </div>
+              <a-empty v-if="!catalog.loading && catalog.items.length === 0" :description="'{{ i18n "pages.plugins.catalogEmpty" }}'" />
+              <a-list v-else :data-source="catalog.items" size="small" bordered>
+                <a-list-item slot="renderItem" slot-scope="item">
+                  <a-space style="width: 100%; justify-content: space-between;">
+                    <a-space>
+                      <strong>[[ item.name || item.id ]]</strong>
+                      <a-tag>[[ item.id ]]</a-tag>
+                      <a-tooltip v-if="item.description" :overlay-class-name="themeSwitcher.currentTheme">
+                        <template slot="title">[[ item.description ]]</template>
+                        <a-icon type="info-circle" />
+                      </a-tooltip>
+                    </a-space>
+                    <a-button size="small" type="primary" icon="plus" :disabled="pluginRegistryActionLoading" @click="installCatalogItem(item)">
+                      {{ i18n "pages.plugins.installFromCatalog" }}
+                    </a-button>
+                  </a-space>
+                </a-list-item>
+              </a-list>
+            </a-space>
+          </a-card>
+        </a-col>
+        <a-col>
+          <a-card :title="'{{ i18n "pages.plugins.title" }}'" hoverable>
+            <a-space direction="vertical" style="width: 100%">
+              <div class="d-flex justify-between align-center">
+                <a-space>
+                  <a-tooltip :overlay-class-name="themeSwitcher.currentTheme">
+                    <template slot="title">{{ i18n "pages.plugins.strictAuthHint" }}</template>
+                    <a-switch
+                      size="small"
+                      :checked="pluginInstallPolicy.strictAuth"
+                      :disabled="pluginRegistryActionLoading"
+                      @change="setPluginInstallPolicy($event)"
+                    />
+                  </a-tooltip>
+                  <span>{{ i18n "pages.plugins.strictAuthLabel" }}</span>
+                  <a-tag :color="pluginInstallPolicy.strictAuth ? 'red' : 'green'">
+                    [[ pluginInstallPolicy.strictAuth ? '{{ i18n "pages.plugins.strictAuthEnforced" }}' : '{{ i18n "pages.plugins.strictAuthRelaxed" }}' ]]
+                  </a-tag>
+                  <a-input
+                    v-model.trim="pluginRegistryFilter"
+                    :placeholder="'{{ i18n "pages.index.pluginRegistrySearchPlaceholder" }}'"
+                    style="width: 260px"
+                    allow-clear
+                  />
+                  <a-button size="small" icon="plus" type="primary" @click="pluginInstallModal.visible = true" :disabled="pluginRegistryActionLoading">
+                    {{ i18n "pages.plugins.addPlugin" }}
+                  </a-button>
+                </a-space>
+                <a-space>
+                  <a-button size="small" icon="branches" @click="syncPluginRouting" :loading="pluginRoutingSyncLoading">
+                    {{ i18n "pages.plugins.syncRouting" }}
+                  </a-button>
+                  <a-button size="small" icon="sync" @click="loadPluginRegistry" :loading="pluginRegistryLoading">
+                    {{ i18n "pages.plugins.refresh" }}
+                  </a-button>
+                </a-space>
+              </div>
+              <span>{{ i18n "pages.index.pluginRegistryDesc" }}</span>
+              <a-empty v-if="!pluginRegistryLoading && pluginRegistry.length === 0" />
+              <a-list v-else :data-source="filteredPluginRegistry" size="small" bordered>
+                <a-list-item slot="renderItem" slot-scope="plugin">
+                  <a-space style="width: 100%; justify-content: space-between;">
+                    <a-space>
+                      <strong>[[ plugin.id ]]</strong>
+                      <a-tag :color="plugin.health === 'healthy' ? 'green' : (plugin.health === 'degraded' ? 'orange' : 'blue')">
+                        [[ plugin.health || 'unknown' ]]
+                      </a-tag>
+                      <a-tag>v[[ plugin.version || 'unknown' ]]</a-tag>
+                      <a-tag :color="plugin.installed ? 'green' : 'red'">
+                        [[ plugin.installed ? '{{ i18n "pages.index.pluginInstalled" }}' : '{{ i18n "pages.index.pluginMissing" }}' ]]
+                      </a-tag>
+                    </a-space>
+                    <a-space>
+                      <a-switch
+                        size="small"
+                        :checked="!!plugin.enabled"
+                        :disabled="pluginRegistryActionLoading || !pluginHasAction(plugin.id, 'setEnabled')"
+                        @change="setPluginEnabled(plugin.id, $event)"
+                      ></a-switch>
+                      <a-button
+                        v-if="pluginHasAction(plugin.id, 'reinstall')"
+                        size="small"
+                        icon="tool"
+                        :disabled="pluginRegistryActionLoading"
+                        @click="reinstallPlugin(plugin.id)"
+                      >
+                        {{ i18n "pages.index.pluginIntegrationReinstall" }}
+                      </a-button>
+                      <a-button
+                        v-if="pluginHasAction(plugin.id, 'uninstall')"
+                        size="small"
+                        type="danger"
+                        :disabled="pluginRegistryActionLoading"
+                        @click="uninstallPlugin(plugin.id)"
+                      >
+                        {{ i18n "pages.index.pluginIntegrationUninstall" }}
+                      </a-button>
+                      <a-tag v-if="plugin.canConfigure" color="blue">
+                        {{ i18n "pages.index.pluginConfigurable" }}
+                      </a-tag>
+                      <a-button
+                        v-if="plugin.canConfigure"
+                        size="small"
+                        icon="setting"
+                        :disabled="pluginRegistryActionLoading"
+                        @click="openPluginConfig(plugin.id)"
+                      >
+                        {{ i18n "pages.plugins.configure" }}
+                      </a-button>
+                    </a-space>
+                  </a-space>
+                  <div v-if="plugin.message" style="margin-top: 6px; word-break: break-word;">
+                    [[ plugin.message ]]
+                  </div>
+                </a-list-item>
+              </a-list>
+            </a-space>
+          </a-card>
+        </a-col>
+      </a-row>
+    </a-layout-content>
+  </a-layout>
+</a-layout>
+
+<a-modal
+  v-model="pluginInstallModal.visible"
+  :title="'{{ i18n "pages.plugins.addPlugin" }}'"
+  :confirm-loading="pluginRegistryActionLoading"
+  @ok="submitPluginInstall"
+  :class="themeSwitcher.currentTheme"
+>
+  <a-form layout="vertical">
+    <a-form-item :label="'{{ i18n "pages.plugins.sourceType" }}'">
+      <a-select v-model="pluginInstallModal.sourceType" :dropdown-class-name="themeSwitcher.currentTheme">
+        <a-select-option value="manifest_url">Manifest URL / file</a-select-option>
+        <a-select-option value="git_repo">Git repository</a-select-option>
+        <a-select-option value="zip">ZIP URL / file</a-select-option>
+        <a-select-option value="path">Local path</a-select-option>
+      </a-select>
+    </a-form-item>
+    <a-form-item :label="'{{ i18n "pages.plugins.source" }}'">
+      <a-input
+        v-model.trim="pluginInstallModal.source"
+        :placeholder="'{{ i18n "pages.plugins.sourcePlaceholder" }}'"
+      />
+    </a-form-item>
+  </a-form>
+</a-modal>
+
+<a-modal
+  v-model="pluginConfigModal.visible"
+  :title="pluginConfigModal.title || 'Plugin configuration'"
+  :closable="true"
+  :footer="null"
+  :class="themeSwitcher.currentTheme"
+>
+  <a-space direction="vertical" style="width: 100%">
+    <a-form layout="vertical">
+      <a-form-item v-for="field in pluginConfigModal.fields" :key="field.key" :label="field.label">
+        <a-input v-if="field.type === 'text'" v-model.trim="pluginConfigModal.values[field.key]" :placeholder="field.placeholder || ''" />
+        <a-input-password v-else-if="field.type === 'password'" v-model.trim="pluginConfigModal.values[field.key]" :placeholder="field.placeholder || ''" />
+        <a-input-number v-else-if="field.type === 'number'" v-model="pluginConfigModal.values[field.key]" style="width: 100%" />
+        <a-switch v-else-if="field.type === 'bool'" v-model="pluginConfigModal.values[field.key]" />
+        <a-input v-else v-model.trim="pluginConfigModal.values[field.key]" :placeholder="field.placeholder || ''" />
+      </a-form-item>
+    </a-form>
+    <div class="d-flex justify-end">
+      <a-space>
+        <a-button @click="pluginConfigModal.visible = false">{{ i18n "close" }}</a-button>
+        <a-button type="primary" :loading="pluginRegistryActionLoading" @click="submitPluginConfig">{{ i18n "save" }}</a-button>
+      </a-space>
+    </div>
+  </a-space>
+</a-modal>
+{{template "page/body_scripts" .}}
+{{template "component/aSidebar" .}}
+{{template "component/aThemeSwitch" .}}
+<script>
+  const app = new Vue({
+    delimiters: ['[[', ']]'],
+    mixins: [MediaQueryMixin],
+    el: '#app',
+    data: {
+      themeSwitcher,
+      pluginRegistry: [],
+      pluginActions: {},
+      pluginSchemas: {},
+      pluginRegistryFilter: '',
+      pluginRegistryLoading: false,
+      pluginRegistryActionLoading: false,
+      pluginRoutingSyncLoading: false,
+      catalog: {
+        source: '',
+        loading: false,
+        items: [],
+      },
+      pluginInstallModal: { visible: false, sourceType: 'manifest_url', source: '' },
+      pluginConfigModal: { visible: false, pluginId: '', title: '', submitAction: 'saveConfig', fields: [], values: {} },
+      pluginInstallPolicy: { strictAuth: false },
+    },
+    computed: {
+      filteredPluginRegistry() {
+        const list = Array.isArray(this.pluginRegistry) ? this.pluginRegistry : [];
+        const q = (this.pluginRegistryFilter || '').toLowerCase();
+        if (!q) return list;
+        return list.filter((p) => ((p.id || '') + (p.health || '') + (p.message || '')).toLowerCase().includes(q));
+      },
+    },
+    methods: {
+      pluginLabel(pluginId) {
+        const plugin = (this.pluginRegistry || []).find((p) => p && p.id === pluginId);
+        return (plugin && plugin.id) ? plugin.id : pluginId;
+      },
+      tPluginMessage(key, label) {
+        const templateMap = {
+          applyingConfig: '{{ i18n "pages.index.pluginApplyingConfig" }}',
+          applyConfigFailed: '{{ i18n "pages.index.pluginApplyConfigFailed" }}',
+          configApplied: '{{ i18n "pages.index.pluginConfigApplied" }}',
+          enabling: '{{ i18n "pages.index.pluginEnabling" }}',
+          disabling: '{{ i18n "pages.index.pluginDisabling" }}',
+          enableFailed: '{{ i18n "pages.index.pluginEnableFailed" }}',
+          disableFailed: '{{ i18n "pages.index.pluginDisableFailed" }}',
+          enabled: '{{ i18n "pages.index.pluginEnabled" }}',
+          disabled: '{{ i18n "pages.index.pluginDisabled" }}',
+          reinstalling: '{{ i18n "pages.index.pluginReinstalling" }}',
+          reinstallFailed: '{{ i18n "pages.index.pluginReinstallFailed" }}',
+          reinstalled: '{{ i18n "pages.index.pluginReinstalled" }}',
+          uninstalling: '{{ i18n "pages.index.pluginUninstalling" }}',
+          uninstallFailed: '{{ i18n "pages.index.pluginUninstallFailed" }}',
+          uninstalled: '{{ i18n "pages.index.pluginUninstalled" }}',
+          noSchema: '{{ i18n "pages.index.pluginNoSchema" }}',
+          configLoaded: '{{ i18n "pages.index.pluginConfigLoaded" }}',
+        };
+        const template = templateMap[key] || '%s';
+        return template.replace('%s', label || '');
+      },
+      pluginActionFeedback(msg) {
+        const obj = msg && msg.obj ? msg.obj : null;
+        const isPreflightLike = !!(obj && Object.prototype.hasOwnProperty.call(obj, 'ok') && Array.isArray(obj.errors));
+        if (!msg || msg.success === false) {
+          const reason = (msg && (msg.obj || msg.msg)) ? ` (${msg.obj || msg.msg})` : '';
+          return { ok: false, detail: reason };
+        }
+        if (isPreflightLike && obj.ok === false) {
+          const parts = [];
+          if (Array.isArray(obj.errors) && obj.errors.length > 0) parts.push(`errors: ${obj.errors.join('; ')}`);
+          if (Array.isArray(obj.warnings) && obj.warnings.length > 0) parts.push(`warnings: ${obj.warnings.join('; ')}`);
+          if (Array.isArray(obj.suggestions) && obj.suggestions.length > 0) parts.push(`suggestions: ${obj.suggestions.join('; ')}`);
+          return { ok: false, detail: parts.length ? ` (${parts.join(' | ')})` : '' };
+        }
+        return { ok: true, detail: '' };
+      },
+      pluginHasAction(pluginId, actionId) {
+        const actions = this.pluginActions[pluginId];
+        return Array.isArray(actions) && actions.some((a) => a && a.id === actionId);
+      },
+      async loadPluginRegistry() {
+        this.pluginRegistryLoading = true;
+        const msg = await HttpUtil.get('/panel/api/plugins/registry');
+        this.pluginRegistryLoading = false;
+        if (!msg.success || !Array.isArray(msg.obj)) return;
+        this.pluginRegistry = msg.obj;
+        await Promise.all(this.pluginRegistry.map((plugin) => this.loadPluginActions(plugin.id)));
+      },
+      async loadPluginActions(pluginId) {
+        const msg = await HttpUtil.get(`/panel/api/plugins/${pluginId}/actions`);
+        this.$set(this.pluginActions, pluginId, (msg.success && Array.isArray(msg.obj)) ? msg.obj : []);
+      },
+      async loadPluginInstallPolicy() {
+        const msg = await HttpUtil.get('/panel/api/plugins/install/policy');
+        if (!msg.success || !msg.obj) return;
+        this.pluginInstallPolicy.strictAuth = !!msg.obj.strictAuth;
+      },
+      async setPluginInstallPolicy(enabled) {
+        const msg = await HttpUtil.post('/panel/api/plugins/install/policy', { strictAuth: !!enabled });
+        if (!msg.success) {
+          this.$message.error(`{{ i18n "pages.plugins.policyUpdateFailed" }}: ${msg.obj || msg.msg || ''}`);
+          return;
+        }
+        this.pluginInstallPolicy.strictAuth = !!(msg.obj && msg.obj.strictAuth);
+        this.$message.success('{{ i18n "pages.plugins.policyUpdated" }}');
+      },
+      async loadPluginSchema(pluginId) {
+        const msg = await HttpUtil.get(`/panel/api/plugins/${pluginId}/ui-schema`);
+        const schema = (msg.success && msg.obj) ? msg.obj : null;
+        this.$set(this.pluginSchemas, pluginId, schema);
+        return schema;
+      },
+      async executePluginAction(pluginId, actionId, payload = {}) {
+        return HttpUtil.post(`/panel/api/plugins/${pluginId}/actions/${actionId}`, payload);
+      },
+      async syncPluginRouting() {
+        this.pluginRoutingSyncLoading = true;
+        try {
+          const msg = await HttpUtil.post('/panel/api/plugins/routing/sync', {});
+          if (!msg.success) {
+            this.$message.error(`{{ i18n "pages.plugins.routingSyncFailed" }}: ${msg.obj || msg.msg || ''}`);
+            return;
+          }
+          const obj = msg.obj || {};
+          const failed = Number(obj.failed || 0);
+          const total = Number(obj.total || 0);
+          if (failed > 0) {
+            this.$message.warning(`{{ i18n "pages.plugins.routingSyncPartial" }}`.replace('%d', `${failed}/${total}`));
+          } else {
+            this.$message.success('{{ i18n "pages.plugins.routingSyncSuccess" }}');
+          }
+        } finally {
+          this.pluginRoutingSyncLoading = false;
+        }
+      },
+      async loadCatalog() {
+        const source = (this.catalog.source || '').trim();
+        if (!source) return this.$message.error('{{ i18n "pages.plugins.catalogSourceRequired" }}');
+        this.catalog.loading = true;
+        try {
+          const msg = await HttpUtil.post('/panel/api/plugins/catalog', { source });
+          if (!msg.success) {
+            this.catalog.items = [];
+            return this.$message.error(`{{ i18n "pages.plugins.catalogLoadFailed" }}: ${msg.obj || msg.msg || ''}`);
+          }
+          this.catalog.items = Array.isArray(msg.obj) ? msg.obj : [];
+        } finally {
+          this.catalog.loading = false;
+        }
+      },
+      async installCatalogItem(item) {
+        if (!item || !item.sourceType || !item.source) {
+          this.$message.error('{{ i18n "pages.plugins.installFailed" }}');
+          return;
+        }
+        this.pluginInstallModal.sourceType = item.sourceType;
+        this.pluginInstallModal.source = item.source;
+        await this.submitPluginInstall();
+      },
+      formatWarningsAsHtml(warnings) {
+        const list = Array.isArray(warnings) ? warnings : [];
+        return list.map((w) => `<div>• ${String(w || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`).join('');
+      },
+      async performPluginInstall(sourceType, source) {
+        this.pluginRegistryActionLoading = true;
+        const hideLoading = this.$message.loading('{{ i18n "pages.plugins.installing" }}', 0);
+        try {
+          const msg = await HttpUtil.post('/panel/api/plugins/install', { sourceType, source });
+          if (!msg.success) return this.$message.error(`{{ i18n "pages.plugins.installFailed" }}: ${msg.obj || msg.msg || ''}`);
+          this.pluginInstallModal.visible = false;
+          this.pluginInstallModal.source = '';
+          await this.loadPluginRegistry();
+          this.$message.success('{{ i18n "pages.plugins.installSuccess" }}');
+          if (msg.obj && Array.isArray(msg.obj.warnings) && msg.obj.warnings.length > 0) {
+            this.$notification.warning({
+              message: '{{ i18n "pages.plugins.installWarningTitle" }}',
+              description: msg.obj.warnings.join('\n'),
+              duration: 0,
+            });
+          }
+        } finally {
+          hideLoading();
+          this.pluginRegistryActionLoading = false;
+        }
+      },
+      async submitPluginInstall() {
+        const source = (this.pluginInstallModal.source || '').trim();
+        if (!source) return this.$message.error('{{ i18n "pages.plugins.sourceRequired" }}');
+        const sourceType = this.pluginInstallModal.sourceType;
+        const precheck = await HttpUtil.post('/panel/api/plugins/install/precheck', { sourceType, source });
+        if (!precheck.success) {
+          return this.$message.error(`{{ i18n "pages.plugins.installPrecheckFailed" }}: ${precheck.obj || precheck.msg || ''}`);
+        }
+        if (precheck.obj && precheck.obj.blocked) {
+          const warnings = (precheck.obj && Array.isArray(precheck.obj.warnings)) ? precheck.obj.warnings : [];
+          this.$notification.error({
+            message: '{{ i18n "pages.plugins.installBlockedTitle" }}',
+            description: warnings.length > 0 ? warnings.join('\n') : '{{ i18n "pages.plugins.installBlockedDesc" }}',
+            duration: 0,
+          });
+          return;
+        }
+        const warnings = (precheck.obj && Array.isArray(precheck.obj.warnings)) ? precheck.obj.warnings : [];
+        if (warnings.length === 0) return this.performPluginInstall(sourceType, source);
+        this.$confirm({
+          title: '{{ i18n "pages.plugins.installConfirmWarningTitle" }}',
+          content: this.formatWarningsAsHtml(warnings),
+          okText: '{{ i18n "pages.plugins.installProceed" }}',
+          cancelText: '{{ i18n "cancel" }}',
+          class: themeSwitcher.currentTheme,
+          iconType: 'warning',
+          onOk: async () => { await this.performPluginInstall(sourceType, source); },
+        });
+      },
+      async openPluginConfig(pluginId) {
+        const label = this.pluginLabel(pluginId);
+        let schema = this.pluginSchemas[pluginId];
+        if (!schema) schema = await this.loadPluginSchema(pluginId);
+        if (!schema || !Array.isArray(schema.fields) || schema.fields.length === 0) return this.$message.error(this.tPluginMessage('noSchema', label));
+        const values = {};
+        schema.fields.forEach((f) => { values[f.key] = Object.prototype.hasOwnProperty.call(f, 'default') ? f.default : ''; });
+        this.pluginConfigModal = { visible: true, pluginId, title: schema.title || 'Plugin configuration', submitAction: schema.submitAction || 'saveConfig', fields: schema.fields, values };
+        this.$message.success(this.tPluginMessage('configLoaded', label));
+      },
+      async submitPluginConfig() {
+        const { pluginId, submitAction, values } = this.pluginConfigModal;
+        const label = this.pluginLabel(pluginId);
+        this.pluginRegistryActionLoading = true;
+        const hideLoading = this.$message.loading(this.tPluginMessage('applyingConfig', label), 0);
+        try {
+          const msg = await this.executePluginAction(pluginId, submitAction || 'saveConfig', values || {});
+          const feedback = this.pluginActionFeedback(msg);
+          if (!feedback.ok) return this.$message.error(this.tPluginMessage('applyConfigFailed', label) + feedback.detail);
+          this.pluginConfigModal.visible = false;
+          await this.loadPluginRegistry();
+          this.$message.success(this.tPluginMessage('configApplied', label));
+        } finally { hideLoading(); this.pluginRegistryActionLoading = false; }
+      },
+      async setPluginEnabled(pluginId, enabled) {
+        const label = this.pluginLabel(pluginId);
+        this.pluginRegistryActionLoading = true;
+        const hideLoading = this.$message.loading(this.tPluginMessage(enabled ? 'enabling' : 'disabling', label), 0);
+        try {
+          const msg = await this.executePluginAction(pluginId, 'setEnabled', { enabled });
+          const feedback = this.pluginActionFeedback(msg);
+          if (!feedback.ok) return this.$message.error(this.tPluginMessage(enabled ? 'enableFailed' : 'disableFailed', label) + feedback.detail);
+          await this.loadPluginRegistry();
+          this.$message.success(this.tPluginMessage(enabled ? 'enabled' : 'disabled', label));
+        } finally { hideLoading(); this.pluginRegistryActionLoading = false; }
+      },
+      async reinstallPlugin(pluginId) {
+        const label = this.pluginLabel(pluginId);
+        this.pluginRegistryActionLoading = true;
+        const hideLoading = this.$message.loading(this.tPluginMessage('reinstalling', label), 0);
+        try {
+          const msg = await this.executePluginAction(pluginId, 'reinstall');
+          const feedback = this.pluginActionFeedback(msg);
+          if (!feedback.ok) return this.$message.error(this.tPluginMessage('reinstallFailed', label) + feedback.detail);
+          await this.loadPluginRegistry();
+          this.$message.success(this.tPluginMessage('reinstalled', label));
+        } finally { hideLoading(); this.pluginRegistryActionLoading = false; }
+      },
+      uninstallPlugin(pluginId) {
+        const label = this.pluginLabel(pluginId);
+        this.$confirm({
+          title: '{{ i18n "pages.index.pluginIntegrationConfirmTitle1" }}',
+          content: '{{ i18n "pages.index.pluginUninstallConfirm" }}',
+          okText: '{{ i18n "confirm"}}',
+          cancelText: '{{ i18n "cancel"}}',
+          class: themeSwitcher.currentTheme,
+          onOk: async () => {
+            this.pluginRegistryActionLoading = true;
+            const hideLoading = this.$message.loading(this.tPluginMessage('uninstalling', label), 0);
+            try {
+              const msg = await this.executePluginAction(pluginId, 'uninstall', { mode: 'integrationOnly' });
+              const feedback = this.pluginActionFeedback(msg);
+              if (!feedback.ok) return this.$message.error(this.tPluginMessage('uninstallFailed', label) + feedback.detail);
+              await this.loadPluginRegistry();
+              this.$message.success(this.tPluginMessage('uninstalled', label));
+            } finally { hideLoading(); this.pluginRegistryActionLoading = false; }
+          },
+        });
+      },
+    },
+    async mounted() {
+      await this.loadPluginInstallPolicy();
+      await this.loadPluginRegistry();
+    },
+  });
+</script>
+{{ template "page/body_end" .}}

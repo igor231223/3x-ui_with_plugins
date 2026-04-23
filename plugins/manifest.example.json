@@ -1,12 +1,13 @@
 [
   {
-    "id": "naive",
+    "id": "sample-proxy",
     "baseUrl": "http://127.0.0.1:17231",
-    "command": "/usr/local/bin/naive-plugind",
+    "authToken": "",
+    "command": "/usr/local/bin/sample-plugind",
     "args": [],
     "workingDir": ".",
     "env": {
-      "NAIVE_PLUGIN_PORT": "17231"
+      "SAMPLE_PLUGIN_PORT": "17231"
     },
     "autostart": false
   }

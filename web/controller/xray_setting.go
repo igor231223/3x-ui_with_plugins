@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/mhsanaei/3x-ui/v2/util/common"
 	"github.com/mhsanaei/3x-ui/v2/web/service"
@@ -83,7 +84,39 @@ func (a *XraySettingController) updateSetting(c *gin.Context) {
 		outboundTestUrl = "https://www.google.com/generate_204"
 	}
 	_ = a.SettingService.SetXrayOutboundTestUrl(outboundTestUrl)
-	jsonMsg(c, I18nWeb(c, "pages.settings.toasts.modifySettings"), nil)
+	syncRes := a.syncPluginRoutingBestEffort(c)
+	jsonMsgObj(c, I18nWeb(c, "pages.settings.toasts.modifySettings"), gin.H{
+		"pluginRouting": syncRes,
+	}, nil)
+}
+
+func (a *XraySettingController) syncPluginRoutingBestEffort(c *gin.Context) gin.H {
+	pm := service.GetPluginManager()
+	if pm == nil {
+		return gin.H{"total": 0, "failed": 0, "results": map[string]string{}}
+	}
+	tpl, err := a.SettingService.GetXrayConfigTemplate()
+	if err != nil {
+		return gin.H{"total": 0, "failed": 0, "results": map[string]string{}}
+	}
+	payload := map[string]any{}
+	if strings.TrimSpace(tpl) != "" {
+		if err := json.Unmarshal([]byte(tpl), &payload); err != nil {
+			return gin.H{"total": 0, "failed": 0, "results": map[string]string{}}
+		}
+	}
+	results := pm.SyncRouting(c.Request.Context(), payload)
+	failed := 0
+	for _, v := range results {
+		if strings.TrimSpace(v) != "" {
+			failed++
+		}
+	}
+	return gin.H{
+		"total":   len(results),
+		"failed":  failed,
+		"results": results,
+	}
 }
 
 // getDefaultXrayConfig retrieves the default Xray configuration.

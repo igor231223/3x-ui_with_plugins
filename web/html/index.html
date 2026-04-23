@@ -316,14 +316,19 @@
                 <a-card title='{{ i18n "pages.index.pluginRegistryTitle" }}' hoverable>
                   <a-space direction="vertical" style="width: 100%">
                     <div class="d-flex justify-between align-center">
-                      <a-input
-                        v-model.trim="pluginRegistryFilter"
-                        :placeholder="'{{ i18n "pages.index.pluginRegistrySearchPlaceholder" }}'"
-                        style="width: 240px"
-                        allow-clear
-                      />
+                      <a-space>
+                        <a-input
+                          v-model.trim="pluginRegistryFilter"
+                          :placeholder="'{{ i18n "pages.index.pluginRegistrySearchPlaceholder" }}'"
+                          style="width: 240px"
+                          allow-clear
+                        />
+                        <a-button size="small" icon="plus" type="primary" @click="pluginInstallModal.visible = true" :disabled="pluginRegistryActionLoading">
+                          Add plugin
+                        </a-button>
+                      </a-space>
                       <a-button size="small" icon="sync" @click="loadPluginRegistry" :loading="pluginRegistryLoading">
-                        {{ i18n "pages.index.naivePluginRefresh" }}
+                        {{ i18n "pages.index.pluginIntegrationRefresh" }}
                       </a-button>
                     </div>
                     <span>{{ i18n "pages.index.pluginRegistryDesc" }}</span>
@@ -355,7 +360,7 @@
                               :disabled="pluginRegistryActionLoading"
                               @click="reinstallPlugin(plugin.id)"
                             >
-                              {{ i18n "pages.index.naivePluginReinstall" }}
+                              {{ i18n "pages.index.pluginIntegrationReinstall" }}
                             </a-button>
                             <a-button
                               v-if="pluginHasAction(plugin.id, 'uninstall')"
@@ -364,7 +369,7 @@
                               :disabled="pluginRegistryActionLoading"
                               @click="uninstallPlugin(plugin.id)"
                             >
-                              {{ i18n "pages.index.naivePluginUninstall" }}
+                              {{ i18n "pages.index.pluginIntegrationUninstall" }}
                             </a-button>
                             <a-tag v-if="plugin.canConfigure" color="blue">
                               {{ i18n "pages.index.pluginConfigurable" }}
@@ -480,6 +485,30 @@
       </a-form-item>
       <a-form-item label='{{ i18n "pages.index.customGeoUrl" }}'>
         <a-input v-model.trim="customGeoModal.form.url" placeholder="https://"></a-input>
+      </a-form-item>
+    </a-form>
+  </a-modal>
+  <a-modal
+    v-model="pluginInstallModal.visible"
+    title="Add plugin"
+    :confirm-loading="pluginRegistryActionLoading"
+    @ok="submitPluginInstall"
+    :class="themeSwitcher.currentTheme"
+  >
+    <a-form layout="vertical">
+      <a-form-item label="Source type">
+        <a-select v-model="pluginInstallModal.sourceType" :dropdown-class-name="themeSwitcher.currentTheme">
+          <a-select-option value="manifest_url">Manifest URL / file</a-select-option>
+          <a-select-option value="git_repo">Git repository</a-select-option>
+          <a-select-option value="zip">ZIP URL / file</a-select-option>
+          <a-select-option value="path">Local path</a-select-option>
+        </a-select>
+      </a-form-item>
+      <a-form-item label="Source">
+        <a-input
+          v-model.trim="pluginInstallModal.source"
+          placeholder="https://example.com/plugins/manifest.json or /opt/my-plugin"
+        />
       </a-form-item>
     </a-form>
   </a-modal>
@@ -619,7 +648,56 @@
         </a-list-item-meta>
         <a-button @click="importDatabase()" type="primary" icon="upload" />
       </a-list-item>
+      <a-list-item class="ant-backup-list-item">
+        <a-list-item-meta>
+          <template #title>{{ i18n "pages.index.exportFullBackup" }}</template>
+          <template #description>{{ i18n "pages.index.exportFullBackupDesc" }}</template>
+        </a-list-item-meta>
+        <a-button @click="exportFullBackup()" type="primary" icon="download" />
+      </a-list-item>
+      <a-list-item class="ant-backup-list-item">
+        <a-list-item-meta>
+          <template #title>{{ i18n "pages.index.importFullBackup" }}</template>
+          <template #description>{{ i18n "pages.index.importFullBackupDesc" }}</template>
+        </a-list-item-meta>
+        <a-button @click="importFullBackup()" type="primary" icon="upload" />
+      </a-list-item>
     </a-list>
+  </a-modal>
+  <a-modal
+    id="full-backup-precheck-modal"
+    v-model="fullBackupPrecheckModal.visible"
+    :title="'{{ i18n "pages.index.importFullBackupConfirmTitle" }}'"
+    :class="themeSwitcher.currentTheme"
+    :confirm-loading="fullBackupPrecheckModal.restoring"
+    @ok="confirmImportFullBackup"
+  >
+    <a-space direction="vertical" style="width: 100%">
+      <a-alert
+        :type="fullBackupPrecheckModal.ok ? 'success' : 'error'"
+        :message="fullBackupPrecheckModal.ok ? '{{ i18n "pages.index.fullBackupPrecheckOk" }}' : '{{ i18n "pages.index.fullBackupPrecheckFail" }}'"
+        show-icon
+      />
+      <a-descriptions size="small" bordered :column="1">
+        <a-descriptions-item :label="'{{ i18n "pages.index.fullBackupDbFound" }}'">[[ fullBackupPrecheckModal.dbFound ? '{{ i18n "yes" }}' : '{{ i18n "no" }}' ]]</a-descriptions-item>
+        <a-descriptions-item :label="'{{ i18n "pages.index.fullBackupDbFolderFiles" }}'">[[ fullBackupPrecheckModal.dbFolderFiles ]]</a-descriptions-item>
+        <a-descriptions-item :label="'{{ i18n "pages.index.fullBackupPluginBinaries" }}'">[[ fullBackupPrecheckModal.pluginBinaries ]]</a-descriptions-item>
+      </a-descriptions>
+      <a-alert
+        v-if="Array.isArray(fullBackupPrecheckModal.warnings) && fullBackupPrecheckModal.warnings.length > 0"
+        type="warning"
+        show-icon
+        :message="'{{ i18n "pages.index.fullBackupWarnings" }}'"
+        :description="fullBackupPrecheckModal.warnings.join(' | ')"
+      />
+      <a-alert
+        v-if="Array.isArray(fullBackupPrecheckModal.manifestBinHints) && fullBackupPrecheckModal.manifestBinHints.length > 0"
+        type="info"
+        show-icon
+        :message="'{{ i18n "pages.index.fullBackupBinHints" }}'"
+        :description="fullBackupPrecheckModal.manifestBinHints.join(' | ')"
+      />
+    </a-space>
   </a-modal>
   <!-- CPU History Modal -->
   <a-modal id="cpu-history-modal" v-model="cpuHistoryModal.visible" :closable="true"
@@ -1094,6 +1172,17 @@
       logModal,
       xraylogModal,
       backupModal,
+      fullBackupPrecheckModal: {
+        visible: false,
+        restoring: false,
+        ok: false,
+        dbFound: false,
+        dbFolderFiles: 0,
+        pluginBinaries: 0,
+        warnings: [],
+        manifestBinHints: [],
+        backupFile: null,
+      },
       loadingTip: '{{ i18n "loading"}}',
       showAlert: false,
       showIp: false,
@@ -1123,6 +1212,11 @@
       pluginRegistryFilter: '',
       pluginRegistryLoading: false,
       pluginRegistryActionLoading: false,
+      pluginInstallModal: {
+        visible: false,
+        sourceType: 'manifest_url',
+        source: '',
+      },
       pluginConfigModal: {
         visible: false,
         pluginId: '',
@@ -1422,6 +1516,34 @@
       async executePluginAction(pluginId, actionId, payload = {}) {
         return HttpUtil.post(`/panel/api/plugins/${pluginId}/actions/${actionId}`, payload);
       },
+      async submitPluginInstall() {
+        const source = (this.pluginInstallModal.source || '').trim();
+        if (!source) {
+          this.$message.error('Plugin source is required');
+          return;
+        }
+        this.pluginRegistryActionLoading = true;
+        const hideLoading = this.$message.loading('Installing plugin...', 0);
+        try {
+          const msg = await HttpUtil.post('/panel/api/plugins/install', {
+            sourceType: this.pluginInstallModal.sourceType,
+            source,
+          });
+          if (!msg.success) {
+            const reason = msg.obj || msg.msg || 'install failed';
+            this.$message.error(`Plugin install failed: ${reason}`);
+            return;
+          }
+          const installed = (msg.obj && Array.isArray(msg.obj.installed)) ? msg.obj.installed : [];
+          this.pluginInstallModal.visible = false;
+          this.pluginInstallModal.source = '';
+          await this.loadPluginRegistry();
+          this.$message.success(installed.length > 0 ? `Installed: ${installed.join(', ')}` : 'Plugin installed');
+        } finally {
+          hideLoading();
+          this.pluginRegistryActionLoading = false;
+        }
+      },
       async openPluginConfig(pluginId) {
         const label = this.pluginLabel(pluginId);
         const hideLoading = this.$message.loading(this.tPluginMessage('loadingConfig', label), 0);
@@ -1506,7 +1628,7 @@
       uninstallPlugin(pluginId) {
         const label = this.pluginLabel(pluginId);
         this.$confirm({
-          title: '{{ i18n "pages.index.naivePluginConfirmTitle1" }}',
+          title: '{{ i18n "pages.index.pluginIntegrationConfirmTitle1" }}',
           content: '{{ i18n "pages.index.pluginUninstallConfirm" }}',
           okText: '{{ i18n "confirm"}}',
           cancelText: '{{ i18n "cancel"}}',
@@ -1636,6 +1758,9 @@
       exportDatabase() {
         window.location = basePath + 'panel/api/server/getDb';
       },
+      exportFullBackup() {
+        window.location = basePath + 'panel/api/server/getFullBackup';
+      },
       importDatabase() {
         const fileInput = document.createElement('input');
         fileInput.type = 'file';
@@ -1667,6 +1792,65 @@
           }
         });
         fileInput.click();
+      },
+      importFullBackup() {
+        const fileInput = document.createElement('input');
+        fileInput.type = 'file';
+        fileInput.accept = '.zip';
+        fileInput.addEventListener('change', async (event) => {
+          const backupFile = event.target.files[0];
+          if (backupFile) {
+            const formData = new FormData();
+            formData.append('backup', backupFile);
+            this.loading(true);
+            const precheckMsg = await HttpUtil.post('/panel/api/server/importFullBackupPrecheck', formData, {
+              headers: {
+                'Content-Type': 'multipart/form-data',
+              }
+            });
+            this.loading(false);
+            if (!precheckMsg.success) {
+              return;
+            }
+            const pre = precheckMsg.obj || {};
+            this.fullBackupPrecheckModal.ok = !!pre.ok;
+            this.fullBackupPrecheckModal.dbFound = !!pre.dbFound;
+            this.fullBackupPrecheckModal.dbFolderFiles = Number(pre.dbFolderFiles || 0);
+            this.fullBackupPrecheckModal.pluginBinaries = Number(pre.pluginBinaries || 0);
+            this.fullBackupPrecheckModal.warnings = Array.isArray(pre.warnings) ? pre.warnings : [];
+            this.fullBackupPrecheckModal.manifestBinHints = Array.isArray(pre.manifestBinHints) ? pre.manifestBinHints : [];
+            this.fullBackupPrecheckModal.backupFile = backupFile;
+            this.fullBackupPrecheckModal.visible = true;
+          }
+        });
+        fileInput.click();
+      },
+      async confirmImportFullBackup() {
+        if (!this.fullBackupPrecheckModal.ok || !this.fullBackupPrecheckModal.backupFile) return;
+        this.fullBackupPrecheckModal.restoring = true;
+        const uploadData = new FormData();
+        uploadData.append('backup', this.fullBackupPrecheckModal.backupFile);
+        backupModal.hide();
+        this.loading(true);
+        const uploadMsg = await HttpUtil.post('/panel/api/server/importFullBackup', uploadData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          }
+        });
+        this.loading(false);
+        this.fullBackupPrecheckModal.restoring = false;
+        if (!uploadMsg.success) {
+          return;
+        }
+        this.fullBackupPrecheckModal.visible = false;
+        this.loading(true);
+        const restartMsg = await HttpUtil.post("/panel/setting/restartPanel");
+        this.loading(false);
+        if (restartMsg.success) {
+          this.loading(true);
+          await PromiseUtil.sleep(5000);
+          location.reload();
+        }
       },
       startPolling() {
         // Fallback polling mechanism

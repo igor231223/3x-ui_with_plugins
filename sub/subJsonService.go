@@ -10,7 +10,6 @@ import (
 
 	"github.com/mhsanaei/3x-ui/v2/database/model"
 	"github.com/mhsanaei/3x-ui/v2/logger"
-	naiveplugin "github.com/mhsanaei/3x-ui/v2/plugins/naive"
 	"github.com/mhsanaei/3x-ui/v2/util/json_util"
 	"github.com/mhsanaei/3x-ui/v2/util/random"
 	"github.com/mhsanaei/3x-ui/v2/web/service"
@@ -83,8 +82,6 @@ func (s *SubJsonService) GetJson(subId string, host string) (string, string, err
 	var traffic xray.ClientTraffic
 	var clientTraffics []xray.ClientTraffic
 	var configArray []json_util.RawMessage
-	var firstInbound *model.Inbound
-	var firstClientEmail string
 
 	// Prepare Inbounds
 	for _, inbound := range inbounds {
@@ -106,10 +103,6 @@ func (s *SubJsonService) GetJson(subId string, host string) (string, string, err
 
 		for _, client := range clients {
 			if client.Enable && client.SubID == subId {
-				if firstInbound == nil {
-					firstInbound = inbound
-					firstClientEmail = client.Email
-				}
 				clientTraffics = append(clientTraffics, s.SubService.getClientTraffics(inbound.ClientStats, client.Email))
 				newConfigs := s.getConfig(inbound, client, host)
 				configArray = append(configArray, newConfigs...)
@@ -117,9 +110,6 @@ func (s *SubJsonService) GetJson(subId string, host string) (string, string, err
 		}
 	}
 
-	if naiveCfg := s.genNaiveConfig(firstInbound, firstClientEmail); len(naiveCfg) > 0 {
-		configArray = append(configArray, naiveCfg)
-	}
 	if pm := service.GetPluginManager(); pm != nil {
 		pluginConfigs := pm.SubscriptionJSON(context.Background(), subId, host)
 		for _, cfg := range pluginConfigs {
@@ -164,50 +154,6 @@ func (s *SubJsonService) GetJson(subId string, host string) (string, string, err
 
 	header = fmt.Sprintf("upload=%d; download=%d; total=%d; expire=%d", traffic.Up, traffic.Down, traffic.Total, traffic.ExpiryTime/1000)
 	return string(finalJson), header, nil
-}
-
-func (s *SubJsonService) genNaiveConfig(inbound *model.Inbound, email string) json_util.RawMessage {
-	if inbound == nil || strings.TrimSpace(email) == "" {
-		return nil
-	}
-	state, err := s.SubService.naiveService.GetState()
-	if err != nil || state == nil || !state.Enabled || state.State != naiveplugin.NaivePluginStateHealthy {
-		return nil
-	}
-	cfg, err := s.SubService.naiveService.GetRuntimeConfig()
-	if err != nil || cfg == nil {
-		return nil
-	}
-	domain := strings.TrimSpace(cfg.Domain)
-	username := strings.TrimSpace(cfg.Username)
-	password := strings.TrimSpace(cfg.Password)
-	if domain == "" || username == "" || password == "" || cfg.Port <= 0 {
-		return nil
-	}
-
-	naiveOutbound := map[string]any{
-		"protocol": "naive",
-		"tag":      "proxy",
-		"settings": map[string]any{
-			"server":      domain,
-			"server_port": cfg.Port,
-			"username":    username,
-			"password":    password,
-		},
-	}
-
-	newOutbounds := []json_util.RawMessage{}
-	outboundBytes, _ := json.MarshalIndent(naiveOutbound, "", "  ")
-	newOutbounds = append(newOutbounds, outboundBytes)
-	newOutbounds = append(newOutbounds, s.defaultOutbounds...)
-
-	newConfigJson := make(map[string]any)
-	maps.Copy(newConfigJson, s.configJson)
-	newConfigJson["outbounds"] = newOutbounds
-	newConfigJson["remarks"] = s.SubService.genRemark(inbound, email, "naive-json")
-
-	result, _ := json.MarshalIndent(newConfigJson, "", "  ")
-	return result
 }
 
 func (s *SubJsonService) getConfig(inbound *model.Inbound, client model.Client, host string) []json_util.RawMessage {

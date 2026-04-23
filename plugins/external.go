@@ -17,6 +17,7 @@ import (
 type ExternalPluginManifest struct {
 	ID         string            `json:"id"`
 	BaseURL    string            `json:"baseUrl"`
+	AuthToken  string            `json:"authToken,omitempty"`
 	Command    string            `json:"command"`
 	Args       []string          `json:"args"`
 	WorkingDir string            `json:"workingDir"`
@@ -151,6 +152,52 @@ func (p *externalPlugin) SubscriptionJSON(ctx context.Context, subID, host strin
 	return result, nil
 }
 
+func (p *externalPlugin) MenuItems(ctx context.Context) ([]MenuItem, error) {
+	var items []MenuItem
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.cfg.BaseURL+"/menu-items", nil)
+	if err != nil {
+		return nil, err
+	}
+	p.applyAuth(req)
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return []MenuItem{}, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, fmt.Errorf("external plugin request failed: %s", resp.Status)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (p *externalPlugin) ApplyRouting(ctx context.Context, payload map[string]any) error {
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.cfg.BaseURL+"/routing/apply", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	p.applyAuth(req)
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("external plugin routing apply failed: %s", resp.Status)
+	}
+	return nil
+}
+
 func urlQueryEscape(v string) string {
 	r := strings.NewReplacer("%", "%25", "&", "%26", "=", "%3D", " ", "%20", "?", "%3F", "#", "%23")
 	return r.Replace(v)
@@ -163,6 +210,7 @@ func (p *externalPlugin) postAction(ctx context.Context, actionID string, payloa
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	p.applyAuth(req)
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return err
@@ -179,6 +227,7 @@ func (p *externalPlugin) getJSON(ctx context.Context, path string, out any) erro
 	if err != nil {
 		return err
 	}
+	p.applyAuth(req)
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return err
@@ -188,4 +237,11 @@ func (p *externalPlugin) getJSON(ctx context.Context, path string, out any) erro
 		return fmt.Errorf("external plugin request failed: %s", resp.Status)
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+func (p *externalPlugin) applyAuth(req *http.Request) {
+	if strings.TrimSpace(p.cfg.AuthToken) == "" {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(p.cfg.AuthToken))
 }

@@ -903,6 +903,324 @@ func (s *ServerService) GetDb() ([]byte, error) {
 	return fileContents, nil
 }
 
+func (s *ServerService) GetFullBackupBundle() ([]byte, error) {
+	type fullBackupMeta struct {
+		Version        string            `json:"version"`
+		CreatedAt      int64             `json:"createdAt"`
+		AppName        string            `json:"appName"`
+		DBFolder       string            `json:"dbFolder"`
+		DBFileName     string            `json:"dbFileName"`
+		PluginBinaries map[string]string `json:"pluginBinaries,omitempty"`
+	}
+
+	dbBytes, err := s.GetDb()
+	if err != nil {
+		return nil, err
+	}
+
+	buf := bytes.NewBuffer(nil)
+	zw := zip.NewWriter(buf)
+	dbFileName := fmt.Sprintf("%s.db", config.GetName())
+
+	writeEntry := func(name string, data []byte) error {
+		w, err := zw.Create(name)
+		if err != nil {
+			return err
+		}
+		_, err = w.Write(data)
+		return err
+	}
+
+	if err := writeEntry(filepath.ToSlash(filepath.Join("bundle", "db", dbFileName)), dbBytes); err != nil {
+		_ = zw.Close()
+		return nil, err
+	}
+
+	dbRoot := config.GetDBFolderPath()
+	if err := filepath.WalkDir(dbRoot, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(dbRoot, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if rel == "" {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return writeEntry(filepath.ToSlash(filepath.Join("bundle", "db-folder", rel)), data)
+	}); err != nil {
+		_ = zw.Close()
+		return nil, err
+	}
+
+	pluginBinaries := map[string]string{}
+	manifestPath := filepath.Join(dbRoot, "plugins", "manifest.json")
+	if manifestData, err := os.ReadFile(manifestPath); err == nil && strings.TrimSpace(string(manifestData)) != "" {
+		type manifestEntry struct {
+			ID      string `json:"id"`
+			Command string `json:"command"`
+		}
+		var entries []manifestEntry
+		if json.Unmarshal(manifestData, &entries) == nil {
+			for _, e := range entries {
+				cmd := strings.TrimSpace(e.Command)
+				if e.ID == "" || cmd == "" {
+					continue
+				}
+				binData, readErr := os.ReadFile(cmd)
+				if readErr != nil {
+					continue
+				}
+				baseName := filepath.Base(cmd)
+				pluginBinaries[e.ID] = cmd
+				_ = writeEntry(filepath.ToSlash(filepath.Join("bundle", "plugin-binaries", e.ID, baseName)), binData)
+			}
+		}
+	}
+
+	meta := fullBackupMeta{
+		Version:        config.GetVersion(),
+		CreatedAt:      time.Now().Unix(),
+		AppName:        config.GetName(),
+		DBFolder:       dbRoot,
+		DBFileName:     dbFileName,
+		PluginBinaries: pluginBinaries,
+	}
+	metaBytes, _ := json.MarshalIndent(meta, "", "  ")
+	if err := writeEntry(filepath.ToSlash(filepath.Join("bundle", "metadata.json")), metaBytes); err != nil {
+		_ = zw.Close()
+		return nil, err
+	}
+
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func (s *ServerService) ImportFullBackupBundle(file multipart.File) error {
+	zipBytes, err := io.ReadAll(file)
+	if err != nil {
+		return common.NewErrorf("Error reading backup bundle: %v", err)
+	}
+	reader, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	if err != nil {
+		return common.NewErrorf("Invalid backup bundle: %v", err)
+	}
+
+	type fullBackupMeta struct {
+		PluginBinaries map[string]string `json:"pluginBinaries,omitempty"`
+		DBFileName     string            `json:"dbFileName"`
+	}
+	meta := fullBackupMeta{}
+	readZipFile := func(f *zip.File) ([]byte, error) {
+		rc, err := f.Open()
+		if err != nil {
+			return nil, err
+		}
+		defer rc.Close()
+		return io.ReadAll(rc)
+	}
+
+	var dbBytes []byte
+	dbFolderFiles := map[string][]byte{}
+	pluginBinFiles := map[string][]byte{}
+
+	for _, f := range reader.File {
+		name := filepath.ToSlash(strings.TrimSpace(f.Name))
+		if strings.HasPrefix(name, "/") || strings.Contains(name, "..") {
+			return common.NewError("Invalid backup bundle path")
+		}
+		switch {
+		case name == "bundle/metadata.json":
+			data, rErr := readZipFile(f)
+			if rErr != nil {
+				return common.NewErrorf("Error reading bundle metadata: %v", rErr)
+			}
+			_ = json.Unmarshal(data, &meta)
+		case strings.HasPrefix(name, "bundle/db/"):
+			data, rErr := readZipFile(f)
+			if rErr != nil {
+				return common.NewErrorf("Error reading bundled db: %v", rErr)
+			}
+			dbBytes = data
+		case strings.HasPrefix(name, "bundle/db-folder/"):
+			data, rErr := readZipFile(f)
+			if rErr != nil {
+				return common.NewErrorf("Error reading bundled db-folder file: %v", rErr)
+			}
+			rel := strings.TrimPrefix(name, "bundle/db-folder/")
+			if rel != "" {
+				dbFolderFiles[rel] = data
+			}
+		case strings.HasPrefix(name, "bundle/plugin-binaries/"):
+			data, rErr := readZipFile(f)
+			if rErr != nil {
+				return common.NewErrorf("Error reading bundled plugin binary: %v", rErr)
+			}
+			rel := strings.TrimPrefix(name, "bundle/plugin-binaries/")
+			if rel != "" {
+				pluginBinFiles[rel] = data
+			}
+		}
+	}
+
+	if len(dbBytes) == 0 {
+		return common.NewError("Backup bundle does not contain database")
+	}
+
+	tmpDBPath := fmt.Sprintf("%s.fullbundle.tmp", config.GetDBPath())
+	if err := os.WriteFile(tmpDBPath, dbBytes, 0o600); err != nil {
+		return common.NewErrorf("Error preparing bundled db: %v", err)
+	}
+	defer os.Remove(tmpDBPath)
+	tmpDB, err := os.Open(tmpDBPath)
+	if err != nil {
+		return common.NewErrorf("Error opening bundled db: %v", err)
+	}
+	defer tmpDB.Close()
+	if err := s.ImportDB(tmpDB); err != nil {
+		return err
+	}
+
+	dbRoot := config.GetDBFolderPath()
+	for rel, data := range dbFolderFiles {
+		target := filepath.Join(dbRoot, filepath.FromSlash(rel))
+		cleanTarget := filepath.Clean(target)
+		cleanRoot := filepath.Clean(dbRoot)
+		if !strings.HasPrefix(cleanTarget, cleanRoot) {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(cleanTarget), 0o755); err != nil {
+			return common.NewErrorf("Error restoring db-folder file: %v", err)
+		}
+		if err := os.WriteFile(cleanTarget, data, 0o644); err != nil {
+			return common.NewErrorf("Error restoring db-folder file: %v", err)
+		}
+	}
+
+	for rel, data := range pluginBinFiles {
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		if len(parts) < 2 {
+			continue
+		}
+		pluginID := parts[0]
+		target := ""
+		if meta.PluginBinaries != nil {
+			target = strings.TrimSpace(meta.PluginBinaries[pluginID])
+		}
+		if target == "" {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			continue
+		}
+		perm := os.FileMode(0o755)
+		if err := os.WriteFile(target, data, perm); err != nil {
+			continue
+		}
+	}
+	return nil
+}
+
+type FullBackupPrecheckResult struct {
+	OK               bool     `json:"ok"`
+	DBFound          bool     `json:"dbFound"`
+	DBFolderFiles    int      `json:"dbFolderFiles"`
+	PluginBinaries   int      `json:"pluginBinaries"`
+	UnknownEntries   int      `json:"unknownEntries"`
+	Warnings         []string `json:"warnings"`
+	ManifestBinHints []string `json:"manifestBinHints,omitempty"`
+}
+
+func (s *ServerService) PrecheckFullBackupBundle(file multipart.File) (*FullBackupPrecheckResult, error) {
+	zipBytes, err := io.ReadAll(file)
+	if err != nil {
+		return nil, common.NewErrorf("Error reading backup bundle: %v", err)
+	}
+	reader, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	if err != nil {
+		return nil, common.NewErrorf("Invalid backup bundle: %v", err)
+	}
+
+	result := &FullBackupPrecheckResult{
+		OK:             true,
+		Warnings:       []string{},
+		ManifestBinHints: []string{},
+	}
+
+	type fullBackupMeta struct {
+		PluginBinaries map[string]string `json:"pluginBinaries,omitempty"`
+	}
+	meta := fullBackupMeta{}
+
+	readZipFile := func(f *zip.File) ([]byte, error) {
+		rc, err := f.Open()
+		if err != nil {
+			return nil, err
+		}
+		defer rc.Close()
+		return io.ReadAll(rc)
+	}
+
+	for _, f := range reader.File {
+		name := filepath.ToSlash(strings.TrimSpace(f.Name))
+		if strings.HasPrefix(name, "/") || strings.Contains(name, "..") {
+			result.OK = false
+			result.Warnings = append(result.Warnings, "Backup contains invalid path entries.")
+			continue
+		}
+		switch {
+		case name == "bundle/metadata.json":
+			data, rErr := readZipFile(f)
+			if rErr != nil {
+				result.Warnings = append(result.Warnings, "Unable to read metadata.json from backup.")
+				continue
+			}
+			_ = json.Unmarshal(data, &meta)
+		case strings.HasPrefix(name, "bundle/db/"):
+			result.DBFound = true
+		case strings.HasPrefix(name, "bundle/db-folder/"):
+			result.DBFolderFiles++
+		case strings.HasPrefix(name, "bundle/plugin-binaries/"):
+			result.PluginBinaries++
+		default:
+			result.UnknownEntries++
+		}
+	}
+
+	if !result.DBFound {
+		result.OK = false
+		result.Warnings = append(result.Warnings, "Bundle does not contain database payload.")
+	}
+	if result.DBFolderFiles == 0 {
+		result.Warnings = append(result.Warnings, "Bundle has no db-folder files (plugins/runtime settings may be missing).")
+	}
+	if len(meta.PluginBinaries) == 0 {
+		result.Warnings = append(result.Warnings, "No plugin binary paths in metadata (binaries may need manual deploy).")
+	} else {
+		for pluginID, target := range meta.PluginBinaries {
+			target = strings.TrimSpace(target)
+			if target == "" {
+				continue
+			}
+			if _, statErr := os.Stat(filepath.Dir(target)); statErr != nil {
+				result.ManifestBinHints = append(result.ManifestBinHints, fmt.Sprintf("%s -> %s (target dir not found)", pluginID, target))
+			}
+		}
+	}
+	return result, nil
+}
+
 func (s *ServerService) ImportDB(file multipart.File) error {
 	// Check if the file is a SQLite database
 	isValidDb, err := database.IsSQLiteDB(file)

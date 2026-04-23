@@ -84,6 +84,7 @@ var defaultValueMap = map[string]string{
 	"externalTrafficInformEnable": "false",
 	"externalTrafficInformURI":    "",
 	"xrayOutboundTestUrl":         "https://www.google.com/generate_204",
+	"pluginInstallStrictAuth":     "false",
 
 	// LDAP defaults
 	"ldapEnable":            "false",
@@ -280,6 +281,14 @@ func (s *SettingService) GetXrayConfigTemplate() (string, error) {
 
 func (s *SettingService) GetXrayOutboundTestUrl() (string, error) {
 	return s.getString("xrayOutboundTestUrl")
+}
+
+func (s *SettingService) GetPluginInstallStrictAuth() (bool, error) {
+	return s.getBool("pluginInstallStrictAuth")
+}
+
+func (s *SettingService) SetPluginInstallStrictAuth(value bool) error {
+	return s.setBool("pluginInstallStrictAuth", value)
 }
 
 func (s *SettingService) SetXrayOutboundTestUrl(url string) error {

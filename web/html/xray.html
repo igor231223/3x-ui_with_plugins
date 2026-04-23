@@ -23,6 +23,28 @@
           </a-alert>
         </transition>
         <transition name="list" appear>
+          <a-alert
+            v-if="pluginRoutingSyncAlert.visible"
+            type="warning"
+            :style="{ marginBottom: '10px' }"
+            :message="pluginRoutingSyncAlert.message"
+            show-icon
+            closable
+            @close="pluginRoutingSyncAlert.visible = false"
+          >
+            <template slot="action">
+              <a-button size="small" icon="sync" :loading="pluginRoutingSyncAlert.retrying" @click="retryPluginRoutingSync">
+                Retry
+              </a-button>
+            </template>
+            <template slot="description">
+              <div v-for="item in pluginRoutingSyncAlert.items" :key="item.plugin">
+                [[ item.plugin ]]: [[ item.error ]]
+              </div>
+            </template>
+          </a-alert>
+        </transition>
+        <transition name="list" appear>
           <a-row v-if="!loadingStates.fetched">
             <div :style="{ minHeight: 'calc(100vh - 120px)' }"></div>
           </a-row>
@@ -259,6 +281,12 @@
       saveBtnDisable: true,
       refreshing: false,
       restartResult: '',
+      pluginRoutingSyncAlert: {
+        visible: false,
+        message: '',
+        items: [],
+        retrying: false,
+      },
       showAlert: false,
       customGeoAliasLabelSuffix: '{{ i18n "pages.index.customGeoAliasLabelSuffix" }}',
       advSettings: 'xraySetting',
@@ -415,7 +443,46 @@
         });
         this.loading(false);
         if (msg.success) {
+          const routing = msg.obj && msg.obj.pluginRouting ? msg.obj.pluginRouting : null;
+          this.pluginRoutingSyncAlert.visible = false;
+          this.pluginRoutingSyncAlert.items = [];
+          this.pluginRoutingSyncAlert.message = '';
+          if (routing && Number(routing.failed || 0) > 0) {
+            const results = routing.results || {};
+            const fails = Object.keys(results).filter((k) => results[k]);
+            const details = fails.map((k) => `${k}: ${results[k]}`).join('\n');
+            Vue.prototype.$message.warning((`Plugin routing sync completed with warnings (${routing.failed}/${routing.total || fails.length})`) + (details ? `\n${details}` : ''));
+            this.pluginRoutingSyncAlert.visible = true;
+            this.pluginRoutingSyncAlert.message = `Plugin routing sync completed with warnings (${routing.failed}/${routing.total || fails.length})`;
+            this.pluginRoutingSyncAlert.items = fails.map((k) => ({ plugin: k, error: results[k] }));
+          }
           await this.getXraySetting();
+        }
+      },
+      async retryPluginRoutingSync() {
+        this.pluginRoutingSyncAlert.retrying = true;
+        try {
+          const msg = await HttpUtil.post('/panel/api/plugins/routing/sync', {});
+          if (!msg.success) {
+            Vue.prototype.$message.error(`Plugin routing retry failed: ${msg.obj || msg.msg || ''}`);
+            return;
+          }
+          const routing = msg.obj || {};
+          const results = routing.results || {};
+          const fails = Object.keys(results).filter((k) => results[k]);
+          if (fails.length > 0) {
+            this.pluginRoutingSyncAlert.visible = true;
+            this.pluginRoutingSyncAlert.message = `Plugin routing sync completed with warnings (${routing.failed}/${routing.total || fails.length})`;
+            this.pluginRoutingSyncAlert.items = fails.map((k) => ({ plugin: k, error: results[k] }));
+            Vue.prototype.$message.warning(this.pluginRoutingSyncAlert.message);
+            return;
+          }
+          this.pluginRoutingSyncAlert.visible = false;
+          this.pluginRoutingSyncAlert.items = [];
+          this.pluginRoutingSyncAlert.message = '';
+          Vue.prototype.$message.success('Plugin routing sync completed');
+        } finally {
+          this.pluginRoutingSyncAlert.retrying = false;
         }
       },
       async restartXray() {

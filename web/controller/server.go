@@ -45,6 +45,7 @@ func (a *ServerController) initRouter(g *gin.RouterGroup) {
 	g.GET("/getXrayVersion", a.getXrayVersion)
 	g.GET("/getConfigJson", a.getConfigJson)
 	g.GET("/getDb", a.getDb)
+	g.GET("/getFullBackup", a.getFullBackup)
 	g.GET("/getNewUUID", a.getNewUUID)
 	g.GET("/getNewX25519Cert", a.getNewX25519Cert)
 	g.GET("/getNewmldsa65", a.getNewmldsa65)
@@ -59,6 +60,8 @@ func (a *ServerController) initRouter(g *gin.RouterGroup) {
 	g.POST("/logs/:count", a.getLogs)
 	g.POST("/xraylogs/:count", a.getXrayLogs)
 	g.POST("/importDB", a.importDB)
+	g.POST("/importFullBackupPrecheck", a.importFullBackupPrecheck)
+	g.POST("/importFullBackup", a.importFullBackup)
 	g.POST("/getNewEchCert", a.getNewEchCert)
 }
 
@@ -274,6 +277,22 @@ func (a *ServerController) getDb(c *gin.Context) {
 	c.Writer.Write(db)
 }
 
+func (a *ServerController) getFullBackup(c *gin.Context) {
+	data, err := a.serverService.GetFullBackupBundle()
+	if err != nil {
+		jsonMsg(c, I18nWeb(c, "pages.index.getFullBackupError"), err)
+		return
+	}
+	filename := "x-ui-full-backup.zip"
+	if !isValidFilename(filename) {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid filename"))
+		return
+	}
+	c.Header("Content-Type", "application/octet-stream")
+	c.Header("Content-Disposition", "attachment; filename="+filename)
+	c.Writer.Write(data)
+}
+
 func isValidFilename(filename string) bool {
 	// Validate that the filename only contains allowed characters
 	return filenameRegex.MatchString(filename)
@@ -298,6 +317,36 @@ func (a *ServerController) importDB(c *gin.Context) {
 		return
 	}
 	jsonObj(c, I18nWeb(c, "pages.index.importDatabaseSuccess"), nil)
+}
+
+func (a *ServerController) importFullBackup(c *gin.Context) {
+	file, _, err := c.Request.FormFile("backup")
+	if err != nil {
+		jsonMsg(c, I18nWeb(c, "pages.index.readFullBackupError"), err)
+		return
+	}
+	defer file.Close()
+	defer a.serverService.RestartXrayService()
+	if err = a.serverService.ImportFullBackupBundle(file); err != nil {
+		jsonMsg(c, I18nWeb(c, "pages.index.importFullBackupError"), err)
+		return
+	}
+	jsonObj(c, I18nWeb(c, "pages.index.importFullBackupSuccess"), nil)
+}
+
+func (a *ServerController) importFullBackupPrecheck(c *gin.Context) {
+	file, _, err := c.Request.FormFile("backup")
+	if err != nil {
+		jsonMsg(c, I18nWeb(c, "pages.index.readFullBackupError"), err)
+		return
+	}
+	defer file.Close()
+	result, err := a.serverService.PrecheckFullBackupBundle(file)
+	if err != nil {
+		jsonMsg(c, I18nWeb(c, "pages.index.importFullBackupError"), err)
+		return
+	}
+	jsonObj(c, result, nil)
 }
 
 // getNewX25519Cert generates a new X25519 certificate.

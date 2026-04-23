@@ -103,6 +103,81 @@ install_base() {
     esac
 }
 
+ensure_go_toolchain() {
+    if command -v go >/dev/null 2>&1; then
+        return 0
+    fi
+    echo -e "${yellow}Go toolchain not found, installing...${plain}"
+    case "${release}" in
+        ubuntu | debian | armbian)
+            apt-get update && apt-get install -y -q golang-go git
+        ;;
+        fedora | amzn | virtuozzo | rhel | almalinux | rocky | ol)
+            dnf install -y -q golang git
+        ;;
+        centos)
+            if [[ "${VERSION_ID}" =~ ^7 ]]; then
+                yum install -y golang git
+            else
+                dnf install -y -q golang git
+            fi
+        ;;
+        arch | manjaro | parch)
+            pacman -Syu --noconfirm go git
+        ;;
+        opensuse-tumbleweed | opensuse-leap)
+            zypper -q install -y go git
+        ;;
+        alpine)
+            apk add go git
+        ;;
+        *)
+            apt-get update && apt-get install -y -q golang-go git
+        ;;
+    esac
+    command -v go >/dev/null 2>&1
+}
+
+prepare_xui_from_source() {
+    local version_ref="$1"
+    local src_root
+    src_root=$(mktemp -d)
+    local branch_ref="main"
+    if [[ -n "${version_ref}" ]]; then
+        branch_ref="${version_ref}"
+    fi
+
+    echo -e "${yellow}Using source-build fallback (${branch_ref})...${plain}"
+    if ! git clone --depth 1 --branch "${branch_ref}" https://github.com/igor231223/3x-ui_with_plugins.git "${src_root}/repo" >/dev/null 2>&1; then
+        echo -e "${yellow}Failed to clone ${branch_ref}, trying main...${plain}"
+        git clone --depth 1 https://github.com/igor231223/3x-ui_with_plugins.git "${src_root}/repo" >/dev/null 2>&1 || return 1
+    fi
+
+    cd "${src_root}/repo" || return 1
+    ensure_go_toolchain || return 1
+    go build -o x-ui . || return 1
+
+    mkdir -p "${xui_folder%/x-ui}/x-ui"
+    cp -f x-ui "${xui_folder%/x-ui}/x-ui/x-ui"
+    [[ -f x-ui.sh ]] && cp -f x-ui.sh "${xui_folder%/x-ui}/x-ui/x-ui.sh"
+    [[ -f x-ui.service ]] && cp -f x-ui.service "${xui_folder%/x-ui}/x-ui/x-ui.service"
+    [[ -f x-ui.service.debian ]] && cp -f x-ui.service.debian "${xui_folder%/x-ui}/x-ui/x-ui.service.debian"
+    [[ -f x-ui.service.arch ]] && cp -f x-ui.service.arch "${xui_folder%/x-ui}/x-ui/x-ui.service.arch"
+    [[ -f x-ui.service.rhel ]] && cp -f x-ui.service.rhel "${xui_folder%/x-ui}/x-ui/x-ui.service.rhel"
+    [[ -f x-ui.rc ]] && cp -f x-ui.rc "${xui_folder%/x-ui}/x-ui/x-ui.rc"
+
+    if [[ -d web ]]; then
+        cp -rf web "${xui_folder%/x-ui}/x-ui/"
+    fi
+    if [[ -d sub ]]; then
+        cp -rf sub "${xui_folder%/x-ui}/x-ui/"
+    fi
+
+    cd "${xui_folder%/x-ui}/" || return 1
+    rm -rf "${src_root}"
+    return 0
+}
+
 gen_random_string() {
     local length="$1"
     openssl rand -base64 $(( length * 2 )) \
@@ -784,6 +859,7 @@ config_after_install() {
 
 install_x-ui() {
     cd ${xui_folder%/x-ui}/
+    local from_source=false
     
     # Download resources
     if [ $# == 0 ]; then
@@ -792,15 +868,17 @@ install_x-ui() {
             echo -e "${yellow}Trying to fetch version with IPv4...${plain}"
             tag_version=$(curl -4 -Ls "https://api.github.com/repos/igor231223/3x-ui_with_plugins/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
             if [[ ! -n "$tag_version" ]]; then
-                echo -e "${red}Failed to fetch x-ui version, it may be due to GitHub API restrictions, please try it later${plain}"
-                exit 1
+                echo -e "${yellow}No GitHub release detected for fork, switching to source build.${plain}"
+                from_source=true
             fi
         fi
-        echo -e "Got x-ui latest version: ${tag_version}, beginning the installation..."
-        curl -4fLRo ${xui_folder}-linux-$(arch).tar.gz https://github.com/igor231223/3x-ui_with_plugins/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz
-        if [[ $? -ne 0 ]]; then
-            echo -e "${red}Downloading x-ui failed, please be sure that your server can access GitHub ${plain}"
-            exit 1
+        if [[ "${from_source}" == "false" ]]; then
+            echo -e "Got x-ui latest version: ${tag_version}, beginning the installation..."
+            curl -4fLRo ${xui_folder}-linux-$(arch).tar.gz https://github.com/igor231223/3x-ui_with_plugins/releases/download/${tag_version}/x-ui-linux-$(arch).tar.gz
+            if [[ $? -ne 0 ]]; then
+                echo -e "${yellow}Release download failed, switching to source build.${plain}"
+                from_source=true
+            fi
         fi
     else
         tag_version=$1
@@ -816,8 +894,8 @@ install_x-ui() {
         echo -e "Beginning to install x-ui $1"
         curl -4fLRo ${xui_folder}-linux-$(arch).tar.gz ${url}
         if [[ $? -ne 0 ]]; then
-            echo -e "${red}Download x-ui $1 failed, please check if the version exists ${plain}"
-            exit 1
+            echo -e "${yellow}Download x-ui $1 failed, switching to source build.${plain}"
+            from_source=true
         fi
     fi
     curl -4fLRo /usr/bin/x-ui-temp https://raw.githubusercontent.com/igor231223/3x-ui_with_plugins/main/x-ui.sh
@@ -837,19 +915,33 @@ install_x-ui() {
     fi
     
     # Extract resources and set permissions
-    tar zxvf x-ui-linux-$(arch).tar.gz
-    rm x-ui-linux-$(arch).tar.gz -f
+    if [[ "${from_source}" == "true" ]]; then
+        if ! prepare_xui_from_source "$1"; then
+            echo -e "${red}Source build fallback failed.${plain}"
+            exit 1
+        fi
+        if [[ -z "${tag_version}" ]]; then
+            tag_version="source-build"
+        fi
+    else
+        tar zxvf x-ui-linux-$(arch).tar.gz
+        rm x-ui-linux-$(arch).tar.gz -f
+    fi
     
     cd x-ui
     chmod +x x-ui
-    chmod +x x-ui.sh
+    [[ -f x-ui.sh ]] && chmod +x x-ui.sh
     
     # Check the system's architecture and rename the file accordingly
-    if [[ $(arch) == "armv5" || $(arch) == "armv6" || $(arch) == "armv7" ]]; then
+    if [[ -f bin/xray-linux-$(arch) && ( $(arch) == "armv5" || $(arch) == "armv6" || $(arch) == "armv7" ) ]]; then
         mv bin/xray-linux-$(arch) bin/xray-linux-arm
         chmod +x bin/xray-linux-arm
     fi
-    chmod +x x-ui bin/xray-linux-$(arch)
+    if [[ -f bin/xray-linux-$(arch) ]]; then
+        chmod +x x-ui bin/xray-linux-$(arch)
+    else
+        chmod +x x-ui
+    fi
     
     # Update x-ui cli and se set permission
     mv -f /usr/bin/x-ui-temp /usr/bin/x-ui

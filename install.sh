@@ -138,6 +138,41 @@ ensure_go_toolchain() {
     command -v go >/dev/null 2>&1
 }
 
+ensure_git_client() {
+    if command -v git >/dev/null 2>&1; then
+        return 0
+    fi
+    echo -e "${yellow}Git not found, installing...${plain}"
+    case "${release}" in
+        ubuntu | debian | armbian)
+            apt-get update && apt-get install -y -q git
+        ;;
+        fedora | amzn | virtuozzo | rhel | almalinux | rocky | ol)
+            dnf install -y -q git
+        ;;
+        centos)
+            if [[ "${VERSION_ID}" =~ ^7 ]]; then
+                yum install -y git
+            else
+                dnf install -y -q git
+            fi
+        ;;
+        arch | manjaro | parch)
+            pacman -Syu --noconfirm git
+        ;;
+        opensuse-tumbleweed | opensuse-leap)
+            zypper -q install -y git
+        ;;
+        alpine)
+            apk add git
+        ;;
+        *)
+            apt-get update && apt-get install -y -q git
+        ;;
+    esac
+    command -v git >/dev/null 2>&1
+}
+
 prepare_xui_from_source() {
     local version_ref="$1"
     local src_root
@@ -148,6 +183,7 @@ prepare_xui_from_source() {
     fi
 
     echo -e "${yellow}Using source-build fallback (${branch_ref})...${plain}"
+    ensure_git_client || return 1
     if ! git clone --depth 1 --branch "${branch_ref}" https://github.com/igor231223/3x-ui_with_plugins.git "${src_root}/repo" >/dev/null 2>&1; then
         echo -e "${yellow}Failed to clone ${branch_ref}, trying main...${plain}"
         git clone --depth 1 https://github.com/igor231223/3x-ui_with_plugins.git "${src_root}/repo" >/dev/null 2>&1 || return 1

@@ -410,4 +410,3 @@ func (a *ServerController) getNewmlkem768(c *gin.Context) {
 	}
 	jsonObj(c, out, nil)
 }
-

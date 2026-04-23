@@ -1153,8 +1153,8 @@ func (s *ServerService) PrecheckFullBackupBundle(file multipart.File) (*FullBack
 	}
 
 	result := &FullBackupPrecheckResult{
-		OK:             true,
-		Warnings:       []string{},
+		OK:               true,
+		Warnings:         []string{},
 		ManifestBinHints: []string{},
 	}
 

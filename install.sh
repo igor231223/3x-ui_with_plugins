@@ -110,29 +110,29 @@ ensure_go_toolchain() {
     echo -e "${yellow}Go toolchain not found, installing...${plain}"
     case "${release}" in
         ubuntu | debian | armbian)
-            apt-get update && apt-get install -y -q golang-go git
+            apt-get update && apt-get install -y -q golang-go git gcc libc6-dev
         ;;
         fedora | amzn | virtuozzo | rhel | almalinux | rocky | ol)
-            dnf install -y -q golang git
+            dnf install -y -q golang git gcc glibc-devel
         ;;
         centos)
             if [[ "${VERSION_ID}" =~ ^7 ]]; then
-                yum install -y golang git
+                yum install -y golang git gcc glibc-devel
             else
-                dnf install -y -q golang git
+                dnf install -y -q golang git gcc glibc-devel
             fi
         ;;
         arch | manjaro | parch)
-            pacman -Syu --noconfirm go git
+            pacman -Syu --noconfirm go git gcc
         ;;
         opensuse-tumbleweed | opensuse-leap)
-            zypper -q install -y go git
+            zypper -q install -y go git gcc glibc-devel
         ;;
         alpine)
-            apk add go git
+            apk add go git build-base musl-dev
         ;;
         *)
-            apt-get update && apt-get install -y -q golang-go git
+            apt-get update && apt-get install -y -q golang-go git gcc libc6-dev
         ;;
     esac
     command -v go >/dev/null 2>&1
@@ -191,7 +191,7 @@ prepare_xui_from_source() {
 
     cd "${src_root}/repo" || return 1
     ensure_go_toolchain || return 1
-    go build -o x-ui . || return 1
+    CGO_ENABLED=1 go build -o x-ui . || return 1
 
     mkdir -p "${xui_folder%/x-ui}/x-ui"
     cp -f x-ui "${xui_folder%/x-ui}/x-ui/x-ui"
